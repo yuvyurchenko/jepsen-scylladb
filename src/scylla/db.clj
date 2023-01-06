@@ -280,13 +280,23 @@
   calls apt-get install."
   [test]
   (c/su
-    (debian/add-repo!
-      "scylla"
-      (str "deb  [arch=amd64] http://downloads.scylladb.com/downloads/"
-           "scylla/deb/debian/scylladb-" (:version test)
-           " buster non-free")
-      "hkp://keyserver.ubuntu.com:80"
+   (if (str/starts-with? (:version test) "4") 
+     (debian/add-repo! 
+      "scylla" 
+      (str "deb  [arch=amd64] http://downloads.scylladb.com/downloads/" 
+           "scylla/deb/debian/scylladb-" (:version test) 
+           " buster non-free") 
+      "hkp://keyserver.ubuntu.com:80" 
       "5e08fbd8b5d6ec9c")
+    ;;  else 5
+     (debian/add-repo!
+      "scylla"
+      (str "deb  [arch=amd64] "
+           "http://downloads.scylladb.com/downloads/scylla/deb/debian-ubuntu/scylladb-"
+           (:version test)
+           " stable main")
+      "hkp://keyserver.ubuntu.com:80"
+      "d0a112e067426ab2"))
     ; Scylla wants to install SNTP/NTP, which is going to break in
     ; containers--we skip the install here.
     (debian/install [:scylla :scylla-jmx :scylla-tools :ntp-])))

@@ -23,11 +23,13 @@
                     [client         :as sc]
                     [counter        :as counter]
                     [db             :as db]
+                    [casdb          :as casdb]
                     [list-append    :as list-append]
                     [mv             :as mv]
                     [nemesis        :as nemesis]
                     [wr-register    :as wr-register]
-                    [write-isolation :as write-isolation]]
+                    [write-isolation :as write-isolation]
+                    [crdt-g-counter :as crdt-g-counter]]
             [scylla.collections [map :as cmap]
                                 [set :as cset]]
             [qbits.commons.enum])
@@ -40,6 +42,7 @@
    :batch-return    batch-return/workload
    :cas-register    cas-register/workload
    :counter         counter/workload
+   :crdt-g-counter  crdt-g-counter/workload
    :cmap            cmap/workload
    :list-append     list-append/workload
    :mv              mv/workload
@@ -147,16 +150,23 @@
    "com.datastax.driver.core.policies.RoundRobinPolicy" :error
    })
 
+(defn new-db
+  "Creates either Scylla or Cassandra DB instance"
+  [opts] 
+  (if (= :scylla (:db opts)) 
+    (db/db (:version opts)) 
+    (casdb/db (:version opts))))
+
 (defn scylla-test
   "Takes test options from the CLI, all-tests, etc, and constructs a Jepsen
   test map."
   [opts]
   (let [workload ((workloads (:workload opts)) opts)
-        db       (db/db (:version opts))
+        db       (new-db opts)
         nemesis  (nemesis/package
                    {:db         db
                     :faults     (set (:nemesis opts))
-                    :partition  {:targets [:majority]}
+                    :partition  {:targets [:majority :minority-third :minority :majorities-ring]}
                     :interval  (:nemesis-interval opts)})
         generator (->> (:generator workload)
                        (gen/stagger (/ (:rate opts)))
@@ -209,7 +219,7 @@
     :default "SizeTieredCompactionStrategy"]
 
    [nil "--[no-]fuzz-timestamps" "If set, randomly fuzz timestamps to simulate behavior in a cluster without perfect clocks."
-    :default  true]
+    :default  false]
 
    [nil "--[no-]hinted-handoff" "Enable or disable hinted handoff."
     :default true]
@@ -259,7 +269,7 @@
     :default 2]
 
    [nil "--[no-]quantize-timestamps" "If set, quantizes timestamps to make collisions more likely."
-    :default true]
+    :default false]
 
    ["-r" "--rate HZ" "Approximate number of requests per second per thread"
     :default 10
@@ -288,7 +298,7 @@
    [nil "--trace-cql" "If set, logs executed CQL statements to `trace.cql`."]
 
    ["-v" "--version VERSION" "What version of Scylla should we test?"
-    :default "4.2"]
+    :default "5.1"]
 
    ["-w" "--workload NAME" "What workload should we run?"
     :parse-fn keyword
@@ -302,7 +312,22 @@
    [nil "--write-serial-consistency LEVEL"
     "What *serial* consistency level should we set for writes?"
     :parse-fn keyword
-    :validate [consistency-levels (cli/one-of consistency-levels)]]])
+    :validate [consistency-levels (cli/one-of consistency-levels)]]
+   
+   [nil "--extra-payload-size NUM" "The size of additional payload for each operation in bytes to slow-down the statement execution."
+    :default 0
+    :parse-fn parse-long
+    :validate [pos? "must be positive"]]
+  
+   [nil "--db DB" "Should we use either Scylla or Cassandra as a database?"
+    :default :scylla
+    :parse-fn keyword
+    :validate [#{:scylla :cassandra} "Should be either scylla or cassandra."]]
+   
+   [nil "--[no-]coordinator-batchlog" "Enable or disable coordinator batchlog for Cassandra."
+    :default true]
+   
+   [nil "--homebrewed-tombstones" "Should we switch from delete statements to insert statements with a deleted column"]])
 
 (defn all-tests
   "Takes parsed CLI options and constructs a sequence of test options, by

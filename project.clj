@@ -10,7 +10,7 @@
                                                      com.datastax.cassandra:dse-driver]]
                  [cc.qbits/hayt "4.1.0"]
                  [com.codahale.metrics/metrics-core "3.0.2"]
-                 [com.scylladb/scylla-driver-core "3.7.1-scylla-2"]]
+                 [com.scylladb/scylla-driver-core "3.11.2.4"]]
   :main scylla.core
   :jvm-opts ["-Djava.awt.headless=true"
              "-Xmx6g"

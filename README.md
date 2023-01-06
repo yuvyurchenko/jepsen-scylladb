@@ -1,5 +1,15 @@
 # Scylla
 
+## About this fork
+
+This is a fork of the original [Jepsen Test Suite](https://github.com/jepsen-io/scylla) [[1]](#1-original-repository-httpsgithubcomjepsen-ioscylla) for [ScyllaDB Open Source](https://www.scylladb.com/open-source-nosql-database/) with the following enhancements:
+- A new [test](src/scylla/crdt_g_counter.clj) for the [CmRDT-like Counter](https://www.scylladb.com/open-source-nosql-database/)
+- Supports [ScyllaDB Open Source 5.x](https://www.scylladb.com/open-source-nosql-database/5-x/) deployment
+- Has a limited support to run the same tests using [Apache Cassandra](https://cassandra.apache.org/) instead of [ScyllaDB Open Source](https://www.scylladb.com/open-source-nosql-database/) as a database. Based on [[2]](#2-jepsen-for-cassandra-repository-httpsgithubcomriptanojepsentreecassandracassandra)
+- Incorporates [Docker Setup](docker/) compatible with both [Apache Cassandra](https://cassandra.apache.org/) and [ScyllaDB Open Source](https://www.scylladb.com/open-source-nosql-database/) deployments. Based on [[3]](#3-docker-part-from-the-jepsen-framework-repository-httpsgithubcomjepsen-iojepsentreemaindocker)
+
+## Overview
+
 This repository implements Jepsen tests for Scylla.
 
 You'll need a Jepsen environment, including a control node with a JVM and
@@ -50,7 +60,23 @@ for a full list of options.
 
 ## Running Tests in Docker
 
-A Docker container preconfigured to run Jepsen tests is available at `tjake/jepsen` on [Docker Hub](https://hub.docker.com/r/tjake/jepsen). Since it runs Docker inside Docker, it must be run with the privileged flag. A command like `docker run -it --privileged -v /home/jkni/git:/jkni-git tjake/jepsen` will start the container and attach to it as an interactive shell. Since you'll likely be running a newer version of Jepsen/C* tests than those available in the image, you'll want to share the directory containing your local Jepsen/C* clone with the container as in the example above.
+### Quick tips
+Navigate into the docker directory
+```
+cd docker
+```
+Start new containers in dev mode (all changes in the current repository immediatly available in the control container)
+```
+./bin/up --dev -d
+```
+Connect to the control container
+```
+./bin/console
+```
+Shutdown all containers
+```
+./bin/down
+```
 
 ## Troubleshooting
 
@@ -63,3 +89,9 @@ containers, on the container host.
 ```
 echo 16777216 >/proc/sys/fs/aio-max-nr
 ```
+
+## References
+
+#### [1] Original repository: https://github.com/jepsen-io/scylla
+#### [2] Jepsen for Cassandra repository: https://github.com/riptano/jepsen/tree/cassandra/cassandra
+#### [3] Docker part from the Jepsen framework repository: https://github.com/jepsen-io/jepsen/tree/main/docker

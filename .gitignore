@@ -14,3 +14,6 @@ pom.xml.asc
 .hg/
 build.xml
 /test2junit
+docker/docker-compose.yml
+.clj-kondo
+.lsp
