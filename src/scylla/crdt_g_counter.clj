@@ -73,7 +73,7 @@
      With --extra-payload-size argument it is possible to add some additional payload 
      to each row by setting a byte array of the configured size to the :extra_payload column.
      Could be useful to tune the duration of the partition read/write operations."
-  (:require [clojure.tools.logging :refer [trace]]
+  (:require [clojure.tools.logging :refer [trace error]]
             [jepsen
              [client    :as client]
              [checker   :as checker]
@@ -81,7 +81,10 @@
             [qbits.alia :as alia]
             [qbits.alia.policy.retry :as retry]
             [qbits.hayt :as cql]
-            [scylla [client :as c]]))
+            [scylla [client :as c]]
+            [qbits.alia.codec :as cdc]
+            [slingshot.slingshot :refer [try+ throw+]])
+  (:import (java.util List)))
 
 (def counter-id 0)
 (def summ-operation-id "SUMM")
@@ -89,13 +92,13 @@
 (defn generate-payload
   "Returns byte array of the given size"
   [size]
-  (if (and (some? size) (pos? size)) 
-    (byte-array (shuffle (range size))) 
+  (if (and (some? size) (pos? size))
+    (byte-array (shuffle (range size)))
     nil))
 
-(defn set-if-absent 
+(defn set-if-absent
   "Sets a new value to an atom if it contains nil and returns this value. 
-   If the atom already has not-nil value, the current atom's value is returned" 
+   If the atom already has not-nil value, the current atom's value is returned"
   [atom proposed-value]
   (if (compare-and-set! atom nil proposed-value)
     proposed-value
@@ -114,15 +117,54 @@
                       (c/write-opts test))]
     (alia/execute session statement params)))
 
+(defn eager-result-set-fn
+  "We use it to detect multi-paging result sets 
+   since they violates single-partition isolation 
+   and cause this test failure
+   
+   It turned out it is not so easy to correctly handle an exception thrown in the result-set-fn 
+   since it is executed somewhere deep inside the library.
+   As a workaround we use an atom to pass the multipaging event detection back to the test 
+   and wrap other internals into a try-catch block for debug purpouses"
+  [multipage-flag?]
+  (fn [rs]
+    (let [all-rows (into [] rs)
+          exec-info (cdc/execution-info rs)
+          multi-paging? (> (.size exec-info) 1)]
+      (when multi-paging?
+        (try
+          (error "Multipaging detected with resultset size:" (count all-rows)
+                 "Execution info:" (->> exec-info
+                                        (map #(str "ExecInfo{"
+                                                   "pagingState=" (.getPagingState %)
+                                                   ";warnings=" (.getWarnings %)
+                                                   ";payload=" (.getIncomingPayload %)
+                                                   ";speculativeCnt=" (.getSpeculativeExecutions %)
+                                                   ";successIdx=" (.getSuccessfulExecutionIndex %)
+                                                   "}"))
+                                        (reduce str "")))
+          (catch Exception e (error "Failed to log" e)))
+        (reset! multipage-flag? true))
+      all-rows)))
+
 (defn execute-read
   "Execute read CQL statement"
   [session test statement]
-  (let [params (merge {:consistency :quorum
-                       :retry-policy (retry/fallthrough-retry-policy)}
-                      (c/read-opts test))]
-    (alia/execute session statement params)))
+  (let [multipage-flag? (atom false)
+        params (merge {:consistency :quorum
+                       :retry-policy (retry/fallthrough-retry-policy)
+                       :result-set-fn (eager-result-set-fn multipage-flag?)}
+                      (c/read-opts test))
+        results (alia/execute session statement params)]
+    ;; comment the throw to make the test fail if multi-paging happens
+    ;; 
+    ;; (when @multipage-flag?
+    ;;   (throw+ {:type       :multipaging-error 
+    ;;            :message    "Multipaging violates operation isolation" 
+    ;;            :definite?  false}))
+    results))
 
-(defn increment-counter 
+(defn increment-counter
   "Increment counter by inserting an operation row for the given client-id"
   [session operation-id value test]
   (let [insert-increment (cql/insert :crdt_g_counters
@@ -132,20 +174,20 @@
                                                   [:extra_payload (generate-payload (:extra-payload-size test))]
                                                   [:deleted false]]))]
     (trace "INCREMENT COUNTER-ID=" counter-id " BY VALUE=" value ": " insert-increment)
-    (execute-write session 
-                   test 
+    (execute-write session
+                   test
                    insert-increment)))
 
-(defn get-delete-statement 
+(defn get-delete-statement
   "Returns either actual delete statement or update statement with deleted flag in true"
   [record test]
-  (if (:homebrewed-tombstones test) 
-    (cql/insert :crdt_g_counters 
-                (cql/values [[:id counter-id] 
+  (if (:homebrewed-tombstones test)
+    (cql/insert :crdt_g_counters
+                (cql/values [[:id counter-id]
                              [:operation_id (:operation_id record)]
                              [:deleted true]]))
-    (cql/delete :crdt_g_counters 
-                (cql/where [[= :id counter-id] 
+    (cql/delete :crdt_g_counters
+                (cql/where [[= :id counter-id]
                             [= :operation_id (:operation_id record)]]))))
 
 (defn increment-counter-with-gc
@@ -170,22 +212,22 @@
                                                        [:value new-value]
                                                        [:extra_payload (generate-payload (:extra-payload-size test))]
                                                        [:deleted false]]))
-        batch-increment-with-gc (cql/batch 
-                                 (apply cql/queries 
-                                        (conj delete-statements 
+        batch-increment-with-gc (cql/batch
+                                 (apply cql/queries
+                                        (conj delete-statements
                                               update-summ-statement)))]
     (trace "INCREMENT COUNTER-ID=" counter-id " BY VALUE=" value " WITH GC: " batch-increment-with-gc)
-    (execute-write session 
-                   test 
+    (execute-write session
+                   test
                    batch-increment-with-gc)))
 
-(defn read-counter-value 
+(defn read-counter-value
   "Read total value for the given counter-id 
-   considering both aggregated value from the SUMM row and separated incremental operations" 
+   considering both aggregated value from the SUMM row and separated incremental operations"
   [session counter-id test]
   (let [all-data (execute-read session
                                test
-                               (cql/select :crdt_g_counters 
+                               (cql/select :crdt_g_counters
                                            (cql/where [[= :id counter-id]])))
         counter-value (->> all-data
                            (filter #(= (:deleted %1) false))
@@ -194,20 +236,21 @@
     (trace "READ COUNTER-ID=" counter-id " WITH VALUE=" counter-value ": " all-data)
     counter-value))
 
-(defn next-operation-id 
-  "Generates next operation id using client id and client-local counter" 
+(defn next-operation-id
+  "Generates next operation id using client id and client-local counter"
   [client]
-  (str 
-   (:client-id client) 
-   "-" 
+  (str
+   (:client-id client)
+   "-"
    (swap! (:op-id-counter client) inc)))
 
 (defrecord CrdtCounterClient [tbl-created? conn]
   client/Client
 
   (open! [this test node]
-    (assoc this 
-           :conn (c/open test node) 
+    (trace "Create new CrdtCounterClient for client-id =" (:new-client-id-ctr test) "and node-id =" node)
+    (assoc this
+           :conn (c/open test node)
            :client-id (swap! (:new-client-id-ctr test) inc)
            :op-id-counter (atom 0)))
 
@@ -216,31 +259,31 @@
       (locking tbl-created?
         (when (compare-and-set! tbl-created? false true)
           (c/retry-each
-            (alia/execute s (cql/create-keyspace
-                              :jepsen_keyspace
-                              (cql/if-exists false)
-                              (cql/with {:replication {:class :SimpleStrategy 
-                                                       :replication_factor 3}})))
-            (alia/execute s (cql/use-keyspace :jepsen_keyspace))
-            (alia/execute s (cql/create-table
-                              :crdt_g_counters
-                              (cql/if-exists false)
-                              (cql/column-definitions {:id            :int
+           (alia/execute s (cql/create-keyspace
+                            :jepsen_keyspace
+                            (cql/if-exists false)
+                            (cql/with {:replication {:class :SimpleStrategy
+                                                     :replication_factor (:replication-factor test)}})))
+           (alia/execute s (cql/use-keyspace :jepsen_keyspace))
+           (alia/execute s (cql/create-table
+                            :crdt_g_counters
+                            (cql/if-exists false)
+                            (cql/column-definitions {:id            :int
                                                        ; counter id 
-                                                       :operation_id  :text
+                                                     :operation_id  :text
                                                        ; operation identifier: each counter has 
                                                        ; a row with operation_id = 'SUMM' keeping aggregated values 
                                                        ; and many other rows with operation_id equals to some unique operation identifier 
                                                        ; which are evetually aggreagted into the 'SUMM' and deleted
-                                                       :value         :int  
+                                                     :value         :int
                                                        ; counter operation value
-                                                       :extra_payload :blob
+                                                     :extra_payload :blob
                                                        ; field for additional data. 
                                                        ; has no specific meaning in the test and exists to tune a single operation slowdown
-                                                       :deleted       :boolean
+                                                     :deleted       :boolean
                                                        ; homebrewed tombstone
-                                                       :primary-key [:id :operation_id]})
-                              (cql/with {:compaction {:class (:compaction-strategy test)}}))))))))
+                                                     :primary-key [:id :operation_id]})
+                            (cql/with {:compaction {:class (:compaction-strategy test)}}))))))))
 
   (invoke! [this test op]
     (let [s (:session conn)
@@ -248,18 +291,17 @@
       (c/with-errors op #{:read}
         (alia/execute s (cql/use-keyspace :jepsen_keyspace))
         (case (:f op)
-          :add (do (if gc-operator? 
-                     (increment-counter-with-gc s 
-                                                (:value op) 
+          :add (do (if gc-operator?
+                     (increment-counter-with-gc s
+                                                (:value op)
                                                 test)
-                     (increment-counter s 
-                                        (next-operation-id this) 
-                                        (:value op) 
+                     (increment-counter s
+                                        (next-operation-id this)
+                                        (:value op)
                                         test))
                    (assoc op :type :ok))
           :read (let [value (read-counter-value s counter-id test)]
-                  (assoc op :type :ok :value value))))
-      ))
+                  (assoc op :type :ok :value value))))))
 
   (close! [_ _]
     (c/close! conn))
@@ -275,10 +317,10 @@
 
 (defn workload
   "An increment-only counter workload."
-  [opts] 
-  {:client    (crdt-counter-client) 
-   :generator (gen/mix [(repeat {:f :add, :value 1}) 
-                        (repeat {:f :read})]) 
+  [opts]
+  {:client    (crdt-counter-client)
+   :generator (gen/mix [(repeat {:f :add, :value 1})
+                        (repeat {:f :read})])
    :checker   (checker/counter)
    :new-client-id-ctr (atom 0)
    :gc-operator-client-id (atom nil)})

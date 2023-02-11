@@ -166,7 +166,7 @@
         nemesis  (nemesis/package
                    {:db         db
                     :faults     (set (:nemesis opts))
-                    :partition  {:targets [:majority :minority-third :minority :majorities-ring]}
+                    :partition  {:targets [:one :majority :majorities-ring]}
                     :interval  (:nemesis-interval opts)})
         generator (->> (:generator workload)
                        (gen/stagger (/ (:rate opts)))
@@ -327,7 +327,12 @@
    [nil "--[no-]coordinator-batchlog" "Enable or disable coordinator batchlog for Cassandra."
     :default true]
    
-   [nil "--homebrewed-tombstones" "Should we switch from delete statements to insert statements with a deleted column"]])
+   [nil "--homebrewed-tombstones" "Should we switch from delete statements to insert statements with a deleted column"]
+   
+   [nil "--replication-factor NUM" "What replication factor should we use?"
+    :default 3
+    :parse-fn parse-long
+    :validate [pos? "must be positive"]]])
 
 (defn all-tests
   "Takes parsed CLI options and constructs a sequence of test options, by
