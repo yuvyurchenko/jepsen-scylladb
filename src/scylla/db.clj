@@ -326,7 +326,7 @@
 
             :else (do ; If we're NOT replacing, we need to reinstall to
                       ; override any *previously* installed bin
-                      (c/exec :apt-get :install :--reinstall :scylla-server))))))
+                      (c/exec :env "DEBIAN_FRONTEND=noninteractive" :apt-get :install :-y :--reinstall :scylla-server))))))
 
 (defn install!
   "Installs ScyllaDB on the given node."
@@ -420,19 +420,26 @@
   (configure-rsyslog!)
   (configure-scylla! node test))
 
+(defn drop-data! 
+  "Deletes data files" 
+  [node]
+  (info node "Droping Cassandra data files")
+  (c/su
+   (meh (c/exec :rm :-rf
+                ; We leave directories in place; Scylla gets confused
+                ; without them.
+                (lit "/var/lib/scylla/data/*")
+                (lit "/var/lib/scylla/commitlog/*")
+                (lit "/var/lib/scylla/hints/*")
+                (lit "/var/lib/scylla/view_hints/*")))))
+
 (defn wipe!
   "Kills Scylla and deletes local data files."
   [db test node]
   (db/kill! db test node)
-  (c/su
-    (info "deleting data files")
-    (meh (c/exec :rm :-rf
-                 ; We leave directories in place; Scylla gets confused
-                 ; without them.
-                 (lit "/var/lib/scylla/data/*")
-                 (lit "/var/lib/scylla/commitlog/*")
-                 (lit "/var/lib/scylla/hints/*")
-                 (lit "/var/lib/scylla/view_hints/*")))))
+  ;; let's keep data files to have a look at them if necessary
+  ;; (drop-data! node)
+  )
 
 (defn disable!
   "Moves the scylla binary to a different location, preventing Scylla from
@@ -456,6 +463,7 @@
                              :clients-only? true})]
     (reify db/DB
       (setup! [db test node]
+        (drop-data! node)
         ; As a side-effect, this is where we start tracing. Sort of a hack, but
         ; we're never going to want to *disable* tracing, and tests run
         ; sequentially, so... it should be fine.

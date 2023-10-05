@@ -19,6 +19,7 @@
             [jepsen.os.debian :as debian]
             [scylla [batch          :as batch]
                     [batch-return   :as batch-return]
+                    [batch-crosstable :as batch-crosstable]
                     [cas-register   :as cas-register]
                     [client         :as sc]
                     [counter        :as counter]
@@ -28,8 +29,9 @@
                     [mv             :as mv]
                     [nemesis        :as nemesis]
                     [wr-register    :as wr-register]
-                    [write-isolation :as write-isolation]
-                    [crdt-g-counter :as crdt-g-counter]]
+                    [write-isolation :as write-isolation]]
+            [scylla.crdt [g-counter-operation :as crdt-g-counter-operation] 
+                         [g-counter-state :as crdt-g-counter-state]]
             [scylla.collections [map :as cmap]
                                 [set :as cset]]
             [qbits.commons.enum])
@@ -38,11 +40,13 @@
 (def workloads
   "A map of workload names to functions that can take opts and construct
   workloads."
-  {:batch-set       batch/set-workload
-   :batch-return    batch-return/workload
+  {:batch-set               batch/set-workload
+   :batch-return            batch-return/workload
+   :batch-crosstable-set    batch-crosstable/set-workload
    :cas-register    cas-register/workload
    :counter         counter/workload
-   :crdt-g-counter  crdt-g-counter/workload
+   :crdt-g-counter-operation  crdt-g-counter-operation/workload
+   :crdt-g-counter-state      crdt-g-counter-state/workload 
    :cmap            cmap/workload
    :list-append     list-append/workload
    :mv              mv/workload
@@ -94,6 +98,13 @@
   (->> (str/split spec #",")
        (map keyword)
        (mapcat #(get special-nemeses % [%]))))
+
+(defn parse-kv-list
+  "Split 'key1=val1;key2=val2' formatted string into {key1 val1, key2 val2} map"
+  [param]
+  (->> (str/split param #";")
+       (map #(str/split % #"="))
+       (into {})))
 
 (defn scaled
   "Applies a scaling factor to a number - used for durations
@@ -313,22 +324,25 @@
     "What *serial* consistency level should we set for writes?"
     :parse-fn keyword
     :validate [consistency-levels (cli/one-of consistency-levels)]]
-   
+
    [nil "--extra-payload-size NUM" "The size of additional payload for each operation in bytes to slow-down the statement execution."
     :default 0
     :parse-fn parse-long
     :validate [pos? "must be positive"]]
-  
+
    [nil "--db DB" "Should we use either Scylla or Cassandra as a database?"
     :default :scylla
     :parse-fn keyword
     :validate [#{:scylla :cassandra} "Should be either scylla or cassandra."]]
-   
+
    [nil "--[no-]coordinator-batchlog" "Enable or disable coordinator batchlog for Cassandra."
     :default true]
-   
+
    [nil "--homebrewed-tombstones" "Should we switch from delete statements to insert statements with a deleted column"]
-   
+
+   [nil "--update-system-config SYSTEM_CONFIG" "Semicolon-separated key=value pairs to update system.config table in Scylla DB before the test run"
+    :parse-fn parse-kv-list] 
+
    [nil "--replication-factor NUM" "What replication factor should we use?"
     :default 3
     :parse-fn parse-long

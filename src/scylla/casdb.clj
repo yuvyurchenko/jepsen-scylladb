@@ -90,16 +90,33 @@
                       (not (:coordinator-batchlog test)) "\"")
            :>> "~/cassandra/conf/cassandra-env.sh")
    (c/exec :echo "JVM_OPTS=\"$JVM_OPTS -Dcassandra.consistent.rangemovement=false\""
-           :>> "~/cassandra/conf/cassandra-env.sh")))
+           :>> "~/cassandra/conf/cassandra-env.sh")
+   (info node "configuring Kernel")
+   (c/su (c/exec :sysctl :-w "vm.max_map_count=1048575"))))
+
+(defn drop-data!
+  "Deletes data files"
+  [node]
+  (info node "Droping Cassandra data files")
+  (c/su
+   (meh (c/exec :rm :-r "~/cassandra/logs"))
+   (meh (c/exec :rm :-r "~/cassandra/data/data"))
+   (meh (c/exec :rm :-r "~/cassandra/data/hints"))
+   (meh (c/exec :rm :-r "~/cassandra/data/commitlog"))
+   (meh (c/exec :rm :-r "~/cassandra/data/saved_caches"))))
 
 (defn start!
   "Starts Cassandra."
   [node test]
+  (drop-data! node)
   (info node "starting Cassandra")
   (c/su
    (c/exec (lit "~/cassandra/bin/cassandra -R")))
   (sc/close! (sc/await-open test node))
-  (info node "started Cassandra"))
+  (info node "started Cassandra")
+  ;; (c/su
+  ;;  (c/exec (lit "~/cassandra/bin/nodetool settraceprobability 1")))
+  )
 
 (defn stop!
   "Stops Cassandra."
@@ -115,13 +132,9 @@
   "Shuts down Cassandra and wipes data."
   [node]
   (stop! node)
-  (info node "deleting data files")
-  (c/su
-   (meh (c/exec :rm :-r "~/cassandra/logs"))
-   (meh (c/exec :rm :-r "~/cassandra/data/data"))
-   (meh (c/exec :rm :-r "~/cassandra/data/hints"))
-   (meh (c/exec :rm :-r "~/cassandra/data/commitlog"))
-   (meh (c/exec :rm :-r "~/cassandra/data/saved_caches"))))
+  ;; let's keep data files to have a look at them if necessary
+  ;; (drop-data! node)
+  )
 
 (defn db
   "Sets up and tears down CassandraDB"

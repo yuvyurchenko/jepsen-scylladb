@@ -3,10 +3,13 @@
 ## About this fork
 
 This is a fork of the original [Jepsen Test Suite](https://github.com/jepsen-io/scylla) [[1]](#1-original-repository-httpsgithubcomjepsen-ioscylla) for [ScyllaDB Open Source](https://www.scylladb.com/open-source-nosql-database/) with the following enhancements:
-- A new [test](src/scylla/crdt_g_counter.clj) for the [CmRDT-like Counter](https://www.scylladb.com/open-source-nosql-database/)
+- New tests:
+  - [CmRDT-like Counter test](src/scylla/crdt/g_counter_operation.clj)
+  - [CvRDT-like Counter test](src/scylla/crdt/g_counter_state.clj)
+  - [Multi-table Batch test](src/scylla/batch_crosstable.clj)
 - Supports [ScyllaDB Open Source 5.x](https://www.scylladb.com/open-source-nosql-database/5-x/) deployment
 - Has a limited support to run the same tests using [Apache Cassandra](https://cassandra.apache.org/) instead of [ScyllaDB Open Source](https://www.scylladb.com/open-source-nosql-database/) as a database. Based on [[2]](#2-jepsen-for-cassandra-repository-httpsgithubcomriptanojepsentreecassandracassandra)
-- Incorporates [Docker Setup](docker/) compatible with both [Apache Cassandra](https://cassandra.apache.org/) and [ScyllaDB Open Source](https://www.scylladb.com/open-source-nosql-database/) deployments. Based on [[3]](#3-docker-part-from-the-jepsen-framework-repository-httpsgithubcomjepsen-iojepsentreemaindocker)
+- Includes [Docker Setup](docker/) compatible with both [Apache Cassandra](https://cassandra.apache.org/) and [ScyllaDB Open Source](https://www.scylladb.com/open-source-nosql-database/) deployments. Based on [[3]](#3-docker-part-from-the-jepsen-framework-repository-httpsgithubcomjepsen-iojepsentreemaindocker)
 
 ## Overview
 
